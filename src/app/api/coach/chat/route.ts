@@ -5,6 +5,7 @@ import { genai, COACH_MODEL } from "@/lib/coach/gemini-client";
 import {
   PERSONA_SYSTEM_INSTRUCTION,
   buildContextPreamble,
+  buildGoalSummary,
 } from "@/lib/coach/persona-prompt";
 
 export async function GET() {
@@ -71,7 +72,8 @@ export async function POST(request: Request) {
               `${a.date.toDateString()}: ${(a.distanceMeters / 1000).toFixed(1)}km` +
               (a.avgPaceSecPerKm
                 ? ` @ ${Math.floor(a.avgPaceSecPerKm / 60)}:${Math.round(a.avgPaceSecPerKm % 60).toString().padStart(2, "0")}/km`
-                : ""),
+                : "") +
+              (a.avgHeartRate ? `, avg HR ${a.avgHeartRate}` : ""),
           )
           .join("; ")
       : undefined;
@@ -80,9 +82,7 @@ export async function POST(request: Request) {
     model: COACH_MODEL,
     config: {
       systemInstruction: `${PERSONA_SYSTEM_INSTRUCTION}\n\n${buildContextPreamble({
-        goalSummary: goal
-          ? `${goal.type} target of ${goal.targetValue}${goal.targetDate ? ` by ${goal.targetDate.toDateString()}` : ""}`
-          : undefined,
+        goalSummary: goal ? buildGoalSummary(goal) : undefined,
         recentActivitySummary,
       })}`,
     },

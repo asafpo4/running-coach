@@ -1,14 +1,12 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/db";
-import { formatDistance, formatPace } from "@/lib/format";
+import {
+  formatDistance,
+  formatPace,
+  formatClockDuration,
+} from "@/lib/format";
 import { SyncStravaButton } from "./sync-strava-button";
-
-const GOAL_TYPE_LABEL: Record<string, string> = {
-  distance: "Distance goal",
-  pace: "Pace goal",
-  time: "Time goal",
-};
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -45,10 +43,24 @@ export default async function DashboardPage() {
 
       {goal ? (
         <div className="mt-6 rounded-lg border border-black/10 p-5">
-          <p className="text-sm font-medium text-black/50">
-            {GOAL_TYPE_LABEL[goal.type] ?? "Goal"}
+          <p className="text-sm font-medium text-black/50">Goal</p>
+          <p className="mt-1 text-xl font-semibold">
+            {[
+              goal.targetDistanceMeters && formatDistance(goal.targetDistanceMeters),
+              goal.targetTimeSeconds && formatClockDuration(goal.targetTimeSeconds),
+            ]
+              .filter(Boolean)
+              .join(" in ")}
           </p>
-          <p className="mt-1 text-xl font-semibold">{goal.targetValue}</p>
+          {goal.targetDistanceMeters && goal.targetTimeSeconds && (
+            <p className="mt-1 text-sm text-black/60">
+              ≈{" "}
+              {formatPace(
+                goal.targetTimeSeconds / (goal.targetDistanceMeters / 1000),
+              )}{" "}
+              pace
+            </p>
+          )}
           {goal.targetDate && (
             <p className="mt-1 text-sm text-black/60">
               by {new Date(goal.targetDate).toLocaleDateString()}

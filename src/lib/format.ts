@@ -14,3 +14,27 @@ export function formatDuration(seconds: number): string {
   const m = Math.floor((seconds % 3600) / 60);
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
+
+// "45:00" -> 2700, "1:30:00" -> 5400. Returns null if the string isn't a
+// valid mm:ss or h:mm:ss clock format.
+export function parseClockDuration(input: string): number | null {
+  const parts = input.trim().split(":").map((p) => p.trim());
+  if (parts.length < 2 || parts.length > 3) return null;
+  if (!parts.every((p) => /^\d+$/.test(p))) return null;
+
+  const nums = parts.map(Number);
+  const [h, m, s] = nums.length === 3 ? nums : [0, nums[0], nums[1]];
+  if (m >= 60 || s >= 60) return null;
+
+  return h * 3600 + m * 60 + s;
+}
+
+// 2700 -> "45:00", 5400 -> "1:30:00"
+export function formatClockDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.round(seconds % 60);
+  const mm = m.toString().padStart(2, "0");
+  const ss = s.toString().padStart(2, "0");
+  return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`;
+}

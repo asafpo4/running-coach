@@ -19,12 +19,6 @@ enum ProviderType {
   google_calendar
 }
 
-enum GoalType {
-  distance
-  pace
-  time
-}
-
 enum PlanStatus {
   active
   completed
@@ -66,13 +60,15 @@ model User {
 }
 
 model Goal {
-  id           String   @id @default(uuid())
-  userId       String   @map("user_id")
-  type         GoalType
-  targetValue  String   @map("target_value") // e.g. "10k", "5:00/km", "45:00"
-  targetDate   DateTime? @map("target_date")
-  trainingDays String[] @map("training_days") // e.g. ["mon", "wed", "sat"]
-  createdAt    DateTime @default(now()) @map("created_at")
+  id                   String    @id @default(uuid())
+  userId               String    @map("user_id")
+  // At least one of these two is required (enforced in the server action,
+  // not the DB) — either alone is a valid goal, together they imply a pace.
+  targetDistanceMeters Float?    @map("target_distance_meters")
+  targetTimeSeconds    Int?      @map("target_time_seconds")
+  targetDate           DateTime? @map("target_date")
+  trainingDays         String[]  @map("training_days") // e.g. ["mon", "wed", "sat"]
+  createdAt            DateTime  @default(now()) @map("created_at")
 
   user  User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   plans TrainingPlan[]

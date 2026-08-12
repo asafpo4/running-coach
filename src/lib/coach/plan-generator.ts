@@ -1,6 +1,7 @@
 import { Type } from "@google/genai";
 import { prisma } from "@/lib/db";
 import { genai, COACH_MODEL } from "./gemini-client";
+import { buildGoalSummary } from "./persona-prompt";
 import type { WorkoutType } from "@/generated/prisma/enums";
 
 const WEEKDAY_BY_INDEX = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
@@ -172,7 +173,7 @@ export async function generatePlan(userId: string) {
   const prompt = `
 Build a ${PLAN_HORIZON_DAYS}-day running plan for one runner.
 
-Goal: ${goal.type} target of "${goal.targetValue}"${goal.targetDate ? `, by ${goal.targetDate.toDateString()}` : ""}.
+Goal: ${buildGoalSummary(goal)}.
 
 Recent activity (last 14 days):
 ${activitySummary}
@@ -185,7 +186,10 @@ ${dateKeys.join(", ")}
 Vary workout types sensibly (easy, tempo, interval, long, rest) given the
 goal and recent training load — don't schedule back-to-back hard days, and
 scale volume to what the recent activity actually shows the runner can
-handle. Omit targetDistanceMeters/targetPaceSecPerKm for rest days.
+handle. Weigh heart rate relative to pace, not pace alone: a high HR at an
+easy pace signals lower current fitness or fatigue and calls for a more
+conservative plan, while a low HR at that same pace signals room to push
+harder. Omit targetDistanceMeters/targetPaceSecPerKm for rest days.
 `.trim();
 
   const response = await genai.models.generateContent({
