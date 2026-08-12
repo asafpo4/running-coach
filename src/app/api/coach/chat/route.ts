@@ -7,8 +7,27 @@ import {
   buildContextPreamble,
 } from "@/lib/coach/persona-prompt";
 
-// Phase 0 stub: no goal/activity lookups yet (Phase 1+), just proves the
-// Supabase auth -> Prisma -> Gemini -> Prisma round trip works end to end.
+export async function GET() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const history = await prisma.chatMessage.findMany({
+    where: { userId: user.id },
+    orderBy: { createdAt: "asc" },
+    take: 50,
+  });
+
+  return NextResponse.json({ messages: history });
+}
+
+// Activity-aware banter lands in Phase 2 (needs Strava sync running) — for
+// now the coach only knows the user's stated goal, if any.
 export async function POST(request: Request) {
   const supabase = await createClient();
   const {
@@ -34,10 +53,19 @@ export async function POST(request: Request) {
     take: 10,
   });
 
+  const goal = await prisma.goal.findFirst({
+    where: { userId: user.id },
+    orderBy: { createdAt: "desc" },
+  });
+
   const chat = genai.chats.create({
     model: COACH_MODEL,
     config: {
-      systemInstruction: `${PERSONA_SYSTEM_INSTRUCTION}\n\n${buildContextPreamble({})}`,
+      systemInstruction: `${PERSONA_SYSTEM_INSTRUCTION}\n\n${buildContextPreamble({
+        goalSummary: goal
+          ? `${goal.type} target of ${goal.targetValue}${goal.targetDate ? ` by ${goal.targetDate.toDateString()}` : ""}`
+          : undefined,
+      })}`,
     },
     history: recentHistory
       .slice(1) // drop the message we just saved, sent separately below
