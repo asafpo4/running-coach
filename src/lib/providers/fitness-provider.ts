@@ -24,6 +24,13 @@ export interface FitnessProvider {
     providerAthleteId: string | null;
   }>;
 
+  /** Exchange a stored refresh token for a new access token. */
+  refreshAccessToken(refreshToken: string): Promise<{
+    accessToken: string;
+    refreshToken: string;
+    expiresAt: Date;
+  }>;
+
   /** Fetch activities newer than `since` for an already-connected user. */
   listActivities(
     accessToken: string,

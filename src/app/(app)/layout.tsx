@@ -30,6 +30,9 @@ export default async function AppLayout({
         <Link href="/goals/new" className="text-sm text-black/60 hover:text-black">
           Set Goal
         </Link>
+        <Link href="/plan" className="text-sm text-black/60 hover:text-black">
+          Plan
+        </Link>
         <Link href="/chat" className="text-sm text-black/60 hover:text-black">
           Coach Chat
         </Link>

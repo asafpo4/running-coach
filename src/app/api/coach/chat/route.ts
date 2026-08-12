@@ -26,8 +26,6 @@ export async function GET() {
   return NextResponse.json({ messages: history });
 }
 
-// Activity-aware banter lands in Phase 2 (needs Strava sync running) — for
-// now the coach only knows the user's stated goal, if any.
 export async function POST(request: Request) {
   const supabase = await createClient();
   const {
@@ -53,10 +51,30 @@ export async function POST(request: Request) {
     take: 10,
   });
 
-  const goal = await prisma.goal.findFirst({
-    where: { userId: user.id },
-    orderBy: { createdAt: "desc" },
-  });
+  const [goal, recentActivities] = await Promise.all([
+    prisma.goal.findFirst({
+      where: { userId: user.id },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.activity.findMany({
+      where: { userId: user.id },
+      orderBy: { date: "desc" },
+      take: 5,
+    }),
+  ]);
+
+  const recentActivitySummary =
+    recentActivities.length > 0
+      ? recentActivities
+          .map(
+            (a) =>
+              `${a.date.toDateString()}: ${(a.distanceMeters / 1000).toFixed(1)}km` +
+              (a.avgPaceSecPerKm
+                ? ` @ ${Math.floor(a.avgPaceSecPerKm / 60)}:${Math.round(a.avgPaceSecPerKm % 60).toString().padStart(2, "0")}/km`
+                : ""),
+          )
+          .join("; ")
+      : undefined;
 
   const chat = genai.chats.create({
     model: COACH_MODEL,
@@ -65,6 +83,7 @@ export async function POST(request: Request) {
         goalSummary: goal
           ? `${goal.type} target of ${goal.targetValue}${goal.targetDate ? ` by ${goal.targetDate.toDateString()}` : ""}`
           : undefined,
+        recentActivitySummary,
       })}`,
     },
     history: recentHistory

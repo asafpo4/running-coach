@@ -77,6 +77,28 @@ export const stravaProvider: FitnessProvider = {
     };
   },
 
+  async refreshAccessToken(refreshToken) {
+    const res = await fetch("https://www.strava.com/oauth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_id: STRAVA_CLIENT_ID,
+        client_secret: STRAVA_CLIENT_SECRET,
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`Strava token refresh failed: ${res.status}`);
+    }
+    const data = (await res.json()) as StravaTokenResponse;
+    return {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      expiresAt: new Date(data.expires_at * 1000),
+    };
+  },
+
   async listActivities(accessToken, since) {
     const params = new URLSearchParams({ per_page: "50" });
     if (since) {

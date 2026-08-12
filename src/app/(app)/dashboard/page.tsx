@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/db";
+import { formatDistance, formatPace } from "@/lib/format";
+import { SyncStravaButton } from "./sync-strava-button";
 
 const GOAL_TYPE_LABEL: Record<string, string> = {
   distance: "Distance goal",
@@ -17,10 +19,25 @@ export default async function DashboardPage() {
   // Layout already guarantees `user` is set; this satisfies TypeScript.
   if (!user) return null;
 
-  const goal = await prisma.goal.findFirst({
-    where: { userId: user.id },
-    orderBy: { createdAt: "desc" },
-  });
+  const [goal, stravaConnection, recentActivities, activePlan] =
+    await Promise.all([
+      prisma.goal.findFirst({
+        where: { userId: user.id },
+        orderBy: { createdAt: "desc" },
+      }),
+      prisma.providerConnection.findUnique({
+        where: { userId_provider: { userId: user.id, provider: "strava" } },
+      }),
+      prisma.activity.findMany({
+        where: { userId: user.id },
+        orderBy: { date: "desc" },
+        take: 5,
+      }),
+      prisma.trainingPlan.findFirst({
+        where: { userId: user.id, status: "active" },
+        orderBy: { generatedAt: "desc" },
+      }),
+    ]);
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-12">
@@ -42,12 +59,20 @@ export default async function DashboardPage() {
               Training days: {goal.trainingDays.join(", ")}
             </p>
           )}
-          <Link
-            href="/goals/new"
-            className="mt-4 inline-block text-sm underline underline-offset-2"
-          >
-            Update goal
-          </Link>
+          <div className="mt-4 flex items-center gap-4">
+            <Link
+              href="/goals/new"
+              className="text-sm underline underline-offset-2"
+            >
+              Update goal
+            </Link>
+            <Link
+              href="/plan"
+              className="text-sm underline underline-offset-2"
+            >
+              {activePlan ? "View training plan" : "Generate training plan"}
+            </Link>
+          </div>
         </div>
       ) : (
         <div className="mt-6 rounded-lg border border-dashed border-black/20 p-5">
@@ -62,10 +87,52 @@ export default async function DashboardPage() {
       )}
 
       <div className="mt-6 rounded-lg border border-black/10 p-5">
+        <p className="font-medium">Strava</p>
+
+        {stravaConnection ? (
+          <>
+            <p className="mt-1 text-sm text-black/60">Connected.</p>
+            <div className="mt-3">
+              <SyncStravaButton />
+            </div>
+
+            {recentActivities.length > 0 ? (
+              <ul className="mt-4 divide-y divide-black/5">
+                {recentActivities.map((a) => (
+                  <li key={a.id} className="flex justify-between py-2 text-sm">
+                    <span>{new Date(a.date).toLocaleDateString()}</span>
+                    <span>{formatDistance(a.distanceMeters)}</span>
+                    <span className="text-black/60">
+                      {formatPace(a.avgPaceSecPerKm)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-3 text-sm text-black/40">
+                No activities synced yet — hit sync.
+              </p>
+            )}
+          </>
+        ) : (
+          <>
+            <p className="mt-1 text-sm text-black/60">
+              Connect Strava so the coach can see your actual runs.
+            </p>
+            <a
+              href="/api/strava/connect"
+              className="mt-3 inline-block rounded-md bg-black px-4 py-2 text-sm font-medium text-white"
+            >
+              Connect Strava
+            </a>
+          </>
+        )}
+      </div>
+
+      <div className="mt-6 rounded-lg border border-black/10 p-5">
         <p className="font-medium">Talk to your coach</p>
         <p className="mt-1 text-sm text-black/60">
-          Adaptive plan generation lands in Phase 2 — for now, go banter with
-          the coach.
+          Ask about your plan, or just go banter.
         </p>
         <Link
           href="/chat"

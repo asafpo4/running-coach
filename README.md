@@ -16,11 +16,22 @@ Strava API).
 - **Strava API** — primary fitness data source (Garmin auto-exports to
   Strava; see note below on why we don't hit Garmin directly)
 
-## Phase 0 status
+## Status
 
-Auth, DB schema, a Strava OAuth connect/callback flow, and a working
-`/api/coach/chat` round trip (Supabase auth -> Prisma -> Gemini -> Prisma)
-are wired up. No goal-setting UI or plan generation yet — that's Phase 1.
+- **Phase 0** — auth, DB schema, Strava OAuth connect/callback, persona chat
+  API round trip.
+- **Phase 1** — goal-setting form (`/goals/new`), dashboard goal summary,
+  chat UI (`/chat`) with goal-aware persona.
+- **Phase 2** — Strava activity sync (with token refresh) reachable from the
+  dashboard, and adaptive plan generation (`/plan`): Gemini gets the user's
+  goal, recent synced activities, and adherence to the previous plan, and
+  returns a structured (JSON-schema-constrained) 7-day plan. Calendar sync
+  is Phase 3, not built yet.
+
+Note on scheduling: sync and plan generation are both user-triggered
+(buttons), not on a background cron — keeps everything running on free
+tiers with zero extra infrastructure. Vercel Hobby does support a daily
+cron job if you want to automate the sync later.
 
 ## One-time setup (all free)
 
