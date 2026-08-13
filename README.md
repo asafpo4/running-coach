@@ -3,8 +3,7 @@
 A personalized AI running coach: set a goal, connect Strava, get an
 adaptive training plan that syncs to your Google Calendar, and a
 witty/sarcastic coaching chat that knows your actual schedule. Runs on
-free tiers (Vercel Hobby + Supabase Free + Gemini free tier) — see the
-Strava cost note below, that one's no longer fully free.
+free tiers (Vercel Hobby + Supabase Free + Gemini free tier).
 
 ## Stack
 
@@ -47,17 +46,6 @@ Note on scheduling: sync and plan generation are both user-triggered
 tiers with zero extra infrastructure. Vercel Hobby does support a daily
 cron job if you want to automate the sync later.
 
-## Strava now costs money (found this out mid-build)
-
-As of June 2026 Strava paywalled API access — a small app like this one
-needs the developer (not each connecting friend) to have an active paid
-Strava subscription for the Standard Tier. Friends connecting their own
-Strava account via OAuth don't need their own subscription; only the
-account tied to the app's Client ID/Secret does. A free trial + cancel
-covers development and testing without ongoing cost, but running this for
-real, long-term, means either paying monthly or falling back to manual
-activity entry (not built).
-
 ## One-time setup (all free)
 
 1. **Supabase** — create a project at [supabase.com](https://supabase.com).
@@ -82,9 +70,9 @@ activity entry (not built).
    copy into `GEMINI_API_KEY`. Free tier, no billing account needed.
 
 3. **Strava API** — [strava.com/settings/api](https://www.strava.com/settings/api),
-   create an app (requires an active Strava subscription now — see cost
-   note above). Set the "Authorization Callback Domain" to `localhost` for
-   dev. Copy client id/secret into `STRAVA_CLIENT_ID` / `STRAVA_CLIENT_SECRET`.
+   create an app. Set the "Authorization Callback Domain" to `localhost`
+   for dev. Copy client id/secret into `STRAVA_CLIENT_ID` /
+   `STRAVA_CLIENT_SECRET`.
 
 4. **Google Cloud OAuth client** — [console.cloud.google.com](https://console.cloud.google.com):
    - APIs & Services -> Library: enable **Google Calendar API**
@@ -131,7 +119,7 @@ public OAuth API. `src/lib/providers/fitness-provider.ts` defines a
 provider-agnostic interface so a Garmin implementation can be added later
 without touching the rest of the app.
 
-## Deploying (still free, Strava subscription aside)
+## Deploying (still free)
 
 - Push to GitHub, import the repo on [Vercel](https://vercel.com) (Hobby
   plan), add all the same env vars in the Vercel project settings.
