@@ -17,7 +17,7 @@ export default async function DashboardPage() {
   // Layout already guarantees `user` is set; this satisfies TypeScript.
   if (!user) return null;
 
-  const [goal, stravaConnection, recentActivities, activePlan] =
+  const [goal, stravaConnection, calendarConnection, recentActivities, activePlan] =
     await Promise.all([
       prisma.goal.findFirst({
         where: { userId: user.id },
@@ -25,6 +25,11 @@ export default async function DashboardPage() {
       }),
       prisma.providerConnection.findUnique({
         where: { userId_provider: { userId: user.id, provider: "strava" } },
+      }),
+      prisma.providerConnection.findUnique({
+        where: {
+          userId_provider: { userId: user.id, provider: "google_calendar" },
+        },
       }),
       prisma.activity.findMany({
         where: { userId: user.id },
@@ -136,6 +141,29 @@ export default async function DashboardPage() {
               className="mt-3 inline-block rounded-md bg-black px-4 py-2 text-sm font-medium text-white"
             >
               Connect Strava
+            </a>
+          </>
+        )}
+      </div>
+
+      <div className="mt-6 rounded-lg border border-black/10 p-5">
+        <p className="font-medium">Google Calendar</p>
+
+        {calendarConnection ? (
+          <p className="mt-1 text-sm text-black/60">
+            Connected — workouts sync to your calendar automatically
+            whenever a plan is generated.
+          </p>
+        ) : (
+          <>
+            <p className="mt-1 text-sm text-black/60">
+              Connect so scheduled workouts show up in your real calendar.
+            </p>
+            <a
+              href="/api/calendar/connect"
+              className="mt-3 inline-block rounded-md bg-black px-4 py-2 text-sm font-medium text-white"
+            >
+              Connect Google Calendar
             </a>
           </>
         )}

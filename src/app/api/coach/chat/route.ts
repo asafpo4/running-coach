@@ -1,12 +1,21 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/db";
-import { genai, COACH_MODEL } from "@/lib/coach/gemini-client";
+import { genai, COACH_MODEL, withGeminiRetry } from "@/lib/coach/gemini-client";
 import {
   PERSONA_SYSTEM_INSTRUCTION,
   buildContextPreamble,
   buildGoalSummary,
 } from "@/lib/coach/persona-prompt";
+import { matchCompletedWorkouts } from "@/lib/coach/plan-generator";
+
+const WORKOUT_TYPE_LABEL: Record<string, string> = {
+  easy: "Easy run",
+  tempo: "Tempo run",
+  interval: "Intervals",
+  long: "Long run",
+  rest: "Rest day",
+};
 
 export async function GET() {
   const supabase = await createClient();
@@ -52,7 +61,9 @@ export async function POST(request: Request) {
     take: 10,
   });
 
-  const [goal, recentActivities] = await Promise.all([
+  await matchCompletedWorkouts(user.id);
+
+  const [goal, recentActivities, activePlan] = await Promise.all([
     prisma.goal.findFirst({
       where: { userId: user.id },
       orderBy: { createdAt: "desc" },
@@ -62,7 +73,26 @@ export async function POST(request: Request) {
       orderBy: { date: "desc" },
       take: 5,
     }),
+    prisma.trainingPlan.findFirst({
+      where: { userId: user.id, status: "active" },
+      orderBy: { generatedAt: "desc" },
+      include: { workouts: { orderBy: { date: "asc" } } },
+    }),
   ]);
+
+  const scheduleSummary = activePlan
+    ? activePlan.workouts
+        .map((w) => {
+          const label = WORKOUT_TYPE_LABEL[w.type] ?? w.type;
+          const status = w.completedActivityId
+            ? "DONE"
+            : w.date < new Date()
+              ? "MISSED"
+              : "upcoming, not due yet";
+          return `${w.date.toDateString()}: ${label} — ${status}`;
+        })
+        .join("\n")
+    : undefined;
 
   const recentActivitySummary =
     recentActivities.length > 0
@@ -84,6 +114,7 @@ export async function POST(request: Request) {
       systemInstruction: `${PERSONA_SYSTEM_INSTRUCTION}\n\n${buildContextPreamble({
         goalSummary: goal ? buildGoalSummary(goal) : undefined,
         recentActivitySummary,
+        scheduleSummary,
       })}`,
     },
     history: recentHistory
@@ -95,8 +126,14 @@ export async function POST(request: Request) {
       })),
   });
 
-  const response = await chat.sendMessage({ message });
-  const replyText = response.text ?? "…the coach is speechless. Try again.";
+  let replyText: string;
+  try {
+    const response = await withGeminiRetry(() => chat.sendMessage({ message }));
+    replyText = response.text ?? "…the coach is speechless. Try again.";
+  } catch {
+    replyText =
+      "The coach is buried under too many requests right now (Gemini's free tier is overloaded) — give it a minute and try again.";
+  }
 
   await prisma.chatMessage.create({
     data: { userId: user.id, role: "coach", content: replyText },

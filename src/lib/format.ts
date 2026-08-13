@@ -38,3 +38,15 @@ export function formatClockDuration(seconds: number): string {
   const ss = s.toString().padStart(2, "0");
   return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`;
 }
+
+// "YYYY-MM-DD" in the server's local timezone — NOT date.toISOString(),
+// which converts to UTC first and silently rolls back to the previous day
+// for any positive UTC offset (e.g. Israel) whenever the stored time is
+// local midnight. Use this anywhere a Date needs to become a calendar-day
+// string that has to match what a user actually sees on that day.
+export function toLocalDateKey(date: Date): string {
+  const y = date.getFullYear();
+  const m = (date.getMonth() + 1).toString().padStart(2, "0");
+  const d = date.getDate().toString().padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}

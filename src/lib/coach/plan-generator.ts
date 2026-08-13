@@ -1,7 +1,12 @@
 import { Type } from "@google/genai";
 import { prisma } from "@/lib/db";
-import { genai, COACH_MODEL } from "./gemini-client";
+import { genai, COACH_MODEL, withGeminiRetry } from "./gemini-client";
 import { buildGoalSummary } from "./persona-prompt";
+import {
+  removeFutureCalendarEvents,
+  syncPlanToCalendar,
+} from "@/lib/providers/calendar-sync";
+import { toLocalDateKey as toDateKey } from "@/lib/format";
 import type { WorkoutType } from "@/generated/prisma/enums";
 
 const WEEKDAY_BY_INDEX = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
@@ -13,10 +18,6 @@ const WORKOUT_TYPES: WorkoutType[] = [
   "long",
   "rest",
 ];
-
-function toDateKey(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
 
 /**
  * LLMs are unreliable at date arithmetic, so the calendar dates for the
@@ -83,8 +84,12 @@ async function buildContext(userId: string, goalId: string) {
     orderBy: { date: "desc" },
   });
 
+  // Scoped by userId only, not goalId — a user should only ever have one
+  // active plan at a time. Scoping by goalId let a plan for an old goal
+  // survive un-retired whenever a new goal replaced it, since the lookup
+  // for "what to retire" would never see it.
   const previousPlan = await prisma.trainingPlan.findFirst({
-    where: { userId, goalId, status: "active" },
+    where: { userId, status: "active" },
     orderBy: { generatedAt: "desc" },
     include: { workouts: true },
   });
@@ -192,14 +197,23 @@ conservative plan, while a low HR at that same pace signals room to push
 harder. Omit targetDistanceMeters/targetPaceSecPerKm for rest days.
 `.trim();
 
-  const response = await genai.models.generateContent({
-    model: COACH_MODEL,
-    contents: prompt,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: PLAN_RESPONSE_SCHEMA,
-    },
-  });
+  let response;
+  try {
+    response = await withGeminiRetry(() =>
+      genai.models.generateContent({
+        model: COACH_MODEL,
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: PLAN_RESPONSE_SCHEMA,
+        },
+      }),
+    );
+  } catch {
+    throw new Error(
+      "Gemini's free tier is overloaded right now — wait a minute and try generating the plan again.",
+    );
+  }
 
   const parsed = JSON.parse(response.text ?? "{}") as Partial<PlanResponse>;
   const byDate = new Map((parsed.workouts ?? []).map((w) => [w.date, w]));
@@ -215,7 +229,19 @@ harder. Omit targetDistanceMeters/targetPaceSecPerKm for rest days.
     };
   });
 
-  return prisma.$transaction(async (tx) => {
+  // Calendar events for the plan being replaced would otherwise sit
+  // alongside the new plan's events on the same dates — clean those up
+  // before creating the new ones. A network call, so it happens outside
+  // the DB transaction below.
+  if (previousPlan) {
+    try {
+      await removeFutureCalendarEvents(userId, previousPlan.id);
+    } catch (err) {
+      console.error("Calendar cleanup failed for plan", previousPlan.id, err);
+    }
+  }
+
+  const newPlan = await prisma.$transaction(async (tx) => {
     if (previousPlan) {
       await tx.trainingPlan.update({
         where: { id: previousPlan.id },
@@ -247,4 +273,16 @@ harder. Omit targetDistanceMeters/targetPaceSecPerKm for rest days.
       include: { workouts: { orderBy: { date: "asc" } } },
     });
   });
+
+  // Opt-in and best-effort: syncPlanToCalendar no-ops if the user hasn't
+  // connected Google Calendar. Plan generation has already succeeded by
+  // this point regardless, so a Calendar API hiccup shouldn't surface as a
+  // plan-generation failure.
+  try {
+    await syncPlanToCalendar(userId, newPlan.id);
+  } catch (err) {
+    console.error("Calendar sync failed for plan", newPlan.id, err);
+  }
+
+  return newPlan;
 }

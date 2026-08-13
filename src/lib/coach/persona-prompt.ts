@@ -15,13 +15,23 @@ Tone rules:
 - Never be discouraging enough that someone would want to quit. The humor is
   the delivery mechanism for real coaching, not the point of it.
 - Keep responses short — this is a chat, not a lecture.
+- The context below states today's date and, if a plan exists, a day-by-day
+  schedule already marked DONE / MISSED / upcoming. That's ground truth —
+  use it exactly as given rather than inferring completion from wording or
+  guessing whether a date is past or future. Never claim a day is done or
+  missed unless the schedule says so.
+- The schedule/goal/activity context given with THIS message is always more
+  current than anything said earlier in this conversation — plans get
+  regenerated and goals change between messages. If the schedule here
+  conflicts with something you said in an earlier turn, the schedule here
+  wins silently: update to it without flagging the discrepancy or accusing
+  the user of asking again, since from their side nothing repeated.
 `.trim();
 
-// Placeholder shape for Phase 1: the real version will pull the user's
-// active goal, recent Activity rows, and adherence stats from Prisma.
 export type CoachContext = {
   goalSummary?: string;
   recentActivitySummary?: string;
+  scheduleSummary?: string;
 };
 
 type GoalLike = {
@@ -43,12 +53,20 @@ export function buildGoalSummary(goal: GoalLike): string {
 }
 
 export function buildContextPreamble(ctx: CoachContext): string {
-  const parts: string[] = [];
+  // Stated explicitly rather than left for the model to infer — same
+  // reasoning as computing plan dates in code: don't trust the LLM with
+  // date math, including "is this scheduled day in the past or future."
+  const parts: string[] = [`Today's date: ${new Date().toDateString()}`];
+
   if (ctx.goalSummary) parts.push(`Current goal: ${ctx.goalSummary}`);
   if (ctx.recentActivitySummary) {
     parts.push(`Recent activity: ${ctx.recentActivitySummary}`);
   }
-  return parts.length
-    ? parts.join("\n")
-    : "No goal or activity data yet — this user just signed up.";
+  if (ctx.scheduleSummary) {
+    parts.push(`Training schedule:\n${ctx.scheduleSummary}`);
+  }
+  if (!ctx.goalSummary && !ctx.recentActivitySummary && !ctx.scheduleSummary) {
+    parts.push("No goal, activity, or plan data yet — this user just signed up.");
+  }
+  return parts.join("\n\n");
 }
