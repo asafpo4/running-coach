@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/db";
+import { ApiError } from "@google/genai";
 import { genai, withGeminiFallback } from "@/lib/coach/gemini-client";
 import {
   PERSONA_SYSTEM_INSTRUCTION,
@@ -133,9 +134,17 @@ export async function POST(request: Request) {
       return chat.sendMessage({ message });
     });
     replyText = response.text ?? "…the coach is speechless. Try again.";
-  } catch {
-    replyText =
-      "The coach is buried under too many requests right now (Gemini's free tier is overloaded) — give it a minute and try again.";
+  } catch (err) {
+    // TEMPORARY debug aid: surface the real error instead of a generic
+    // message, so we can see exactly what's failing in production. Remove
+    // once diagnosed.
+    const detail =
+      err instanceof ApiError
+        ? `ApiError status=${err.status} message=${err.message}`
+        : err instanceof Error
+          ? `${err.name}: ${err.message}`
+          : String(err);
+    replyText = `[DEBUG] Gemini call failed: ${detail}`;
   }
 
   await prisma.chatMessage.create({
