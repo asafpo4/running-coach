@@ -4,11 +4,13 @@ import { ApiError, GoogleGenAI } from "@google/genai";
 // on the "flash" models, no billing account required.
 export const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-// Pinned rather than "gemini-flash-latest" so the coach's behavior/tone
-// doesn't shift out from under us on a silent model swap. Verify against
-// `ai.models.list()` if this ever 404s — Google retires model versions for
-// new API keys over time.
-export const COACH_MODEL = "gemini-3.5-flash";
+// Using the "-latest" alias rather than a pinned version. We tried pinning
+// (gemini-3.5-flash) and it broke for a full day under sustained 503s while
+// other models on the same key worked fine — a specific version can go
+// down independent of the account/key. "-latest" lets Google route around
+// that; the tradeoff (tone drifting on a silent model swap) is minor next
+// to the coach not working at all.
+export const COACH_MODEL = "gemini-flash-latest";
 
 const RETRYABLE_STATUS_CODES = new Set([429, 503]);
 
