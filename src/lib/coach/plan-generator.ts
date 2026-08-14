@@ -1,6 +1,6 @@
 import { Type } from "@google/genai";
 import { prisma } from "@/lib/db";
-import { genai, COACH_MODEL, withGeminiRetry } from "./gemini-client";
+import { genai, withGeminiFallback } from "./gemini-client";
 import { buildGoalSummary } from "./persona-prompt";
 import {
   removeFutureCalendarEvents,
@@ -199,9 +199,9 @@ harder. Omit targetDistanceMeters/targetPaceSecPerKm for rest days.
 
   let response;
   try {
-    response = await withGeminiRetry(() =>
+    response = await withGeminiFallback((model) =>
       genai.models.generateContent({
-        model: COACH_MODEL,
+        model,
         contents: prompt,
         config: {
           responseMimeType: "application/json",

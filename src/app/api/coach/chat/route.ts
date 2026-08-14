@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/db";
-import { genai, COACH_MODEL, withGeminiRetry } from "@/lib/coach/gemini-client";
+import { genai, withGeminiFallback } from "@/lib/coach/gemini-client";
 import {
   PERSONA_SYSTEM_INSTRUCTION,
   buildContextPreamble,
@@ -108,27 +108,30 @@ export async function POST(request: Request) {
           .join("; ")
       : undefined;
 
-  const chat = genai.chats.create({
-    model: COACH_MODEL,
-    config: {
-      systemInstruction: `${PERSONA_SYSTEM_INSTRUCTION}\n\n${buildContextPreamble({
-        goalSummary: goal ? buildGoalSummary(goal) : undefined,
-        recentActivitySummary,
-        scheduleSummary,
-      })}`,
-    },
-    history: recentHistory
-      .slice(1) // drop the message we just saved, sent separately below
-      .reverse()
-      .map((m) => ({
-        role: m.role === "user" ? "user" : "model",
-        parts: [{ text: m.content }],
-      })),
-  });
+  const chatHistory = recentHistory
+    .slice(1) // drop the message we just saved, sent separately below
+    .reverse()
+    .map((m) => ({
+      role: m.role === "user" ? ("user" as const) : ("model" as const),
+      parts: [{ text: m.content }],
+    }));
+
+  const systemInstruction = `${PERSONA_SYSTEM_INSTRUCTION}\n\n${buildContextPreamble({
+    goalSummary: goal ? buildGoalSummary(goal) : undefined,
+    recentActivitySummary,
+    scheduleSummary,
+  })}`;
 
   let replyText: string;
   try {
-    const response = await withGeminiRetry(() => chat.sendMessage({ message }));
+    const response = await withGeminiFallback((model) => {
+      const chat = genai.chats.create({
+        model,
+        config: { systemInstruction },
+        history: chatHistory,
+      });
+      return chat.sendMessage({ message });
+    });
     replyText = response.text ?? "…the coach is speechless. Try again.";
   } catch {
     replyText =

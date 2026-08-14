@@ -4,33 +4,41 @@ import { ApiError, GoogleGenAI } from "@google/genai";
 // on the "flash" models, no billing account required.
 export const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-// Using the "-latest" alias rather than a pinned version. We tried pinning
-// (gemini-3.5-flash) and it broke for a full day under sustained 503s while
-// other models on the same key worked fine — a specific version can go
-// down independent of the account/key. "-latest" lets Google route around
-// that; the tradeoff (tone drifting on a silent model swap) is minor next
-// to the coach not working at all.
-export const COACH_MODEL = "gemini-flash-latest";
+// Free-tier quota is allocated per model, not just per account — heavy use
+// in one day can exhaust one model's daily quota while others on the same
+// key still have headroom, and a specific model can independently go down
+// under sustained load regardless of account status. Verified both of
+// these happening within the same day. So: a candidate list, tried in
+// order, not a single pinned/aliased model — the app should keep working
+// even when one specific model doesn't.
+export const COACH_MODEL_CANDIDATES = [
+  "gemini-flash-latest",
+  "gemini-3.5-flash-lite",
+  "gemini-3-flash-preview",
+  "gemini-pro-latest",
+];
 
 const RETRYABLE_STATUS_CODES = new Set([429, 503]);
 
 /**
- * Gemini's free tier returns transient 503 "high demand" / 429 rate-limit
- * errors fairly routinely — wrap every call through this instead of
- * surfacing them as user-facing failures on the first bad roll.
+ * Calls `attempt` once per candidate model, in order, moving to the next
+ * on a retryable error (quota exhausted / overloaded) instead of retrying
+ * the same model repeatedly. Throws the last error if every candidate
+ * fails.
  */
-export async function withGeminiRetry<T>(
-  fn: () => Promise<T>,
-  maxAttempts = 3,
+export async function withGeminiFallback<T>(
+  attempt: (model: string) => Promise<T>,
+  candidates: string[] = COACH_MODEL_CANDIDATES,
 ): Promise<T> {
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  let lastError: unknown;
+  for (const model of candidates) {
     try {
-      return await fn();
+      return await attempt(model);
     } catch (err) {
+      lastError = err;
       const retryable = err instanceof ApiError && RETRYABLE_STATUS_CODES.has(err.status);
-      if (!retryable || attempt === maxAttempts) throw err;
-      await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** (attempt - 1)));
+      if (!retryable) throw err;
     }
   }
-  throw new Error("unreachable");
+  throw lastError;
 }
