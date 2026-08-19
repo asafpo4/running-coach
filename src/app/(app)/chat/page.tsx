@@ -13,6 +13,7 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -63,9 +64,35 @@ export default function ChatPage() {
     }
   }
 
+  async function clearConversation() {
+    if (clearing) return;
+    if (!confirm("Clear the whole conversation? This can't be undone.")) return;
+
+    setClearing(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/coach/chat", { method: "DELETE" });
+      if (!res.ok) throw new Error("Request failed");
+      setMessages([]);
+    } catch {
+      setError("Couldn't clear the conversation. Try again.");
+    } finally {
+      setClearing(false);
+    }
+  }
+
   return (
     <div className="mx-auto flex h-[calc(100vh-73px)] max-w-2xl flex-col px-4 py-6">
-      <h1 className="text-xl font-bold">Coach Chat</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-bold">Coach Chat</h1>
+        <button
+          onClick={clearConversation}
+          disabled={clearing || messages.length === 0}
+          className="text-sm text-black/40 hover:text-red-600 disabled:opacity-40"
+        >
+          {clearing ? "Clearing…" : "Clear conversation"}
+        </button>
+      </div>
 
       <div className="mt-4 flex-1 space-y-3 overflow-y-auto rounded-lg border border-black/10 p-4">
         {loading && <p className="text-sm text-black/40">Loading…</p>}

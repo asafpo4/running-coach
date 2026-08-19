@@ -39,13 +39,33 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const history = await prisma.chatMessage.findMany({
+  // Fetch the most recent 50 (desc), then reverse for chronological
+  // display order. The previous version ordered asc before taking 50,
+  // which returns the OLDEST 50 messages ever sent — once a conversation
+  // passes 50 messages total, every message after that point becomes
+  // permanently invisible on load, even though it's still in the DB.
+  const recent = await prisma.chatMessage.findMany({
     where: { userId: user.id },
-    orderBy: { createdAt: "asc" },
+    orderBy: { createdAt: "desc" },
     take: 50,
   });
 
-  return NextResponse.json({ messages: history });
+  return NextResponse.json({ messages: recent.reverse() });
+}
+
+export async function DELETE() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  await prisma.chatMessage.deleteMany({ where: { userId: user.id } });
+
+  return NextResponse.json({ ok: true });
 }
 
 export async function POST(request: Request) {
