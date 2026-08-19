@@ -124,6 +124,27 @@ export async function createCalendarEvent(
   return data.id;
 }
 
+export async function updateCalendarEvent(
+  accessToken: string,
+  eventId: string,
+  input: CalendarEventInput,
+): Promise<void> {
+  const res = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(toEventBody(input)),
+    },
+  );
+  if (!res.ok) {
+    throw new Error(`Calendar event update failed: ${res.status}`);
+  }
+}
+
 export async function deleteCalendarEvent(
   accessToken: string,
   eventId: string,

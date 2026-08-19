@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createPartFromFunctionResponse } from "@google/genai";
 import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/db";
 import { genai, withGeminiFallback } from "@/lib/coach/gemini-client";
@@ -8,6 +9,10 @@ import {
   buildGoalSummary,
 } from "@/lib/coach/persona-prompt";
 import { matchCompletedWorkouts } from "@/lib/coach/plan-generator";
+import {
+  WORKOUT_TOOL_DECLARATIONS,
+  WORKOUT_TOOL_HANDLERS,
+} from "@/lib/coach/workout-actions";
 
 // Default Vercel Hobby function timeout (5-10s) isn't enough headroom for
 // withGeminiFallback's sequential model attempts plus the DB queries around
@@ -135,13 +140,40 @@ async function handleChat(userId: string, message: string) {
 
   let replyText: string;
   try {
-    const response = await withGeminiFallback((model) => {
+    const response = await withGeminiFallback(async (model) => {
       const chat = genai.chats.create({
         model,
-        config: { systemInstruction },
+        config: {
+          systemInstruction,
+          tools: [{ functionDeclarations: WORKOUT_TOOL_DECLARATIONS }],
+        },
         history: chatHistory,
       });
-      return chat.sendMessage({ message });
+
+      let result = await chat.sendMessage({ message });
+
+      // One round of tool calls is enough for these actions — reschedule/
+      // swap/skip don't need to chain into further calls. Execute whatever
+      // the model asked for, then send the results back for its actual
+      // reply to the user.
+      if (result.functionCalls && result.functionCalls.length > 0) {
+        const responseParts = await Promise.all(
+          result.functionCalls.map(async (call) => {
+            const handler = call.name ? WORKOUT_TOOL_HANDLERS[call.name] : undefined;
+            const outcome = handler
+              ? await handler(userId, call.args ?? {})
+              : { success: false, message: `Unknown tool: ${call.name}` };
+            return createPartFromFunctionResponse(
+              call.id ?? call.name ?? "unknown",
+              call.name ?? "unknown",
+              outcome,
+            );
+          }),
+        );
+        result = await chat.sendMessage({ message: responseParts });
+      }
+
+      return result;
     });
     replyText = response.text ?? "…the coach is speechless. Try again.";
   } catch {

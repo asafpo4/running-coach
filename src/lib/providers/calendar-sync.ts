@@ -1,8 +1,11 @@
 import { prisma } from "@/lib/db";
+import type { PlannedWorkout } from "@/generated/prisma/client";
 import {
   refreshAccessToken,
   createCalendarEvent,
+  updateCalendarEvent,
   deleteCalendarEvent,
+  type CalendarEventInput,
 } from "./google-calendar-provider";
 import { formatDistance, formatPace, toLocalDateKey } from "@/lib/format";
 
@@ -15,6 +18,22 @@ const WORKOUT_TYPE_LABEL: Record<string, string> = {
   long: "Long run",
   rest: "Rest day",
 };
+
+function buildEventInput(workout: PlannedWorkout): CalendarEventInput {
+  const label = WORKOUT_TYPE_LABEL[workout.type] ?? workout.type;
+  const details = [
+    workout.targetDistanceMeters && formatDistance(workout.targetDistanceMeters),
+    workout.targetPaceSecPerKm && formatPace(workout.targetPaceSecPerKm),
+  ]
+    .filter(Boolean)
+    .join(", ");
+
+  return {
+    summary: `🏃 ${label}${details ? ` — ${details}` : ""}`,
+    description: "Scheduled by your AI running coach.",
+    date: toLocalDateKey(workout.date),
+  };
+}
 
 async function getValidAccessToken(userId: string): Promise<string | null> {
   const connection = await prisma.providerConnection.findUnique({
@@ -76,23 +95,45 @@ export async function syncPlanToCalendar(
   const workouts = await prisma.plannedWorkout.findMany({ where: { planId } });
 
   for (const workout of workouts) {
-    const label = WORKOUT_TYPE_LABEL[workout.type] ?? workout.type;
-    const details = [
-      workout.targetDistanceMeters && formatDistance(workout.targetDistanceMeters),
-      workout.targetPaceSecPerKm && formatPace(workout.targetPaceSecPerKm),
-    ]
-      .filter(Boolean)
-      .join(", ");
-
-    const eventId = await createCalendarEvent(accessToken, {
-      summary: `🏃 ${label}${details ? ` — ${details}` : ""}`,
-      description: "Scheduled by your AI running coach.",
-      date: toLocalDateKey(workout.date),
-    });
-
+    const eventId = await createCalendarEvent(accessToken, buildEventInput(workout));
     await prisma.plannedWorkout.update({
       where: { id: workout.id },
       data: { calendarEventId: eventId },
     });
   }
+}
+
+/**
+ * Push one workout's current state to its calendar event — creating it if
+ * it doesn't have one yet, updating it in place (date/type/target can all
+ * change) if it does. Used when a single workout is modified via chat
+ * rather than a whole plan being (re)generated. No-op if not connected.
+ */
+export async function syncSingleWorkoutToCalendar(
+  userId: string,
+  workoutId: string,
+): Promise<void> {
+  const accessToken = await getValidAccessToken(userId);
+  if (!accessToken) return;
+
+  const workout = await prisma.plannedWorkout.findUniqueOrThrow({
+    where: { id: workoutId },
+  });
+  const input = buildEventInput(workout);
+
+  if (workout.calendarEventId) {
+    try {
+      await updateCalendarEvent(accessToken, workout.calendarEventId, input);
+      return;
+    } catch {
+      // Event may have been deleted on Google's side — fall through and
+      // create a fresh one instead of failing the whole action.
+    }
+  }
+
+  const eventId = await createCalendarEvent(accessToken, input);
+  await prisma.plannedWorkout.update({
+    where: { id: workoutId },
+    data: { calendarEventId: eventId },
+  });
 }

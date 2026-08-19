@@ -5,8 +5,13 @@ import { buildGoalSummary } from "./persona-prompt";
 import {
   removeFutureCalendarEvents,
   syncPlanToCalendar,
+  syncSingleWorkoutToCalendar,
 } from "@/lib/providers/calendar-sync";
-import { toLocalDateKey as toDateKey } from "@/lib/format";
+import {
+  toLocalDateKey as toDateKey,
+  formatDistance,
+  formatPace,
+} from "@/lib/format";
 import type { WorkoutType } from "@/generated/prisma/enums";
 
 const WEEKDAY_BY_INDEX = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
@@ -43,8 +48,10 @@ function getUpcomingTrainingDates(trainingDays: string[]): Date[] {
  * Links past PlannedWorkouts to the Activity that fulfilled them (same user,
  * same calendar date), so adherence can be computed and shown to Gemini.
  * Safe to call repeatedly — only touches workouts that aren't linked yet.
+ * Returns the number of workouts newly matched by this call, so callers
+ * can tell whether there's fresh completion data worth reacting to.
  */
-export async function matchCompletedWorkouts(userId: string): Promise<void> {
+export async function matchCompletedWorkouts(userId: string): Promise<number> {
   // Scoped to the active plan only — retired plans don't need retroactive
   // completion tracking, and including them let two workouts from
   // different plan versions land on the same date and both try to claim
@@ -56,7 +63,7 @@ export async function matchCompletedWorkouts(userId: string): Promise<void> {
       plan: { userId, status: "active" },
     },
   });
-  if (unmatched.length === 0) return;
+  if (unmatched.length === 0) return 0;
 
   const activities = await prisma.activity.findMany({
     where: { userId },
@@ -76,6 +83,7 @@ export async function matchCompletedWorkouts(userId: string): Promise<void> {
     alreadyClaimed.map((w) => w.completedActivityId!),
   );
 
+  let newlyMatched = 0;
   for (const workout of unmatched) {
     const match = activityByDateKey.get(toDateKey(workout.date));
     if (match && !claimedActivityIds.has(match.id)) {
@@ -84,8 +92,10 @@ export async function matchCompletedWorkouts(userId: string): Promise<void> {
         data: { completedActivityId: match.id },
       });
       claimedActivityIds.add(match.id);
+      newlyMatched++;
     }
   }
+  return newlyMatched;
 }
 
 async function buildContext(userId: string, goalId: string) {
@@ -300,4 +310,150 @@ harder. Omit targetDistanceMeters/targetPaceSecPerKm for rest days.
   }
 
   return newPlan;
+}
+
+const ADJUSTMENT_RESPONSE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    adjustments: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          date: {
+            type: Type.STRING,
+            description: "YYYY-MM-DD, must exactly match one of the given upcoming dates",
+          },
+          targetDistanceMeters: { type: Type.NUMBER },
+          targetPaceSecPerKm: { type: Type.NUMBER },
+        },
+        required: ["date"],
+      },
+      description:
+        "Only include dates that genuinely need a tweak. Leave dates out entirely if the result doesn't change anything for them.",
+    },
+  },
+  required: ["adjustments"],
+};
+
+type AdjustmentResponse = {
+  adjustments: {
+    date: string;
+    targetDistanceMeters?: number;
+    targetPaceSecPerKm?: number;
+  }[];
+};
+
+/**
+ * Light-touch reaction to a single newly-completed workout: only nudges the
+ * *targets* (distance/pace) of the still-upcoming workouts in the active
+ * plan, never their dates or types. This is deliberately much smaller than
+ * generatePlan()'s full reshuffle — it runs automatically after every
+ * Strava sync that picks up a new completion, so it needs to feel like a
+ * minor correction, not the week being rebuilt out from under the user.
+ * Best-effort: callers should treat failures as non-fatal.
+ */
+export async function adjustUpcomingWorkouts(userId: string): Promise<void> {
+  const activePlan = await prisma.trainingPlan.findFirst({
+    where: { userId, status: "active" },
+    orderBy: { generatedAt: "desc" },
+    include: { workouts: { orderBy: { date: "asc" } }, goal: true },
+  });
+  if (!activePlan) return;
+
+  const upcoming = activePlan.workouts.filter(
+    (w) => !w.completedActivityId && w.date > new Date() && w.type !== "rest",
+  );
+  if (upcoming.length === 0) return;
+
+  const lastCompleted = activePlan.workouts
+    .filter((w) => w.completedActivityId)
+    .sort((a, b) => b.date.getTime() - a.date.getTime())[0];
+  if (!lastCompleted) return;
+
+  const activity = await prisma.activity.findUnique({
+    where: { id: lastCompleted.completedActivityId! },
+  });
+  if (!activity) return;
+
+  const targetDesc = [
+    lastCompleted.targetDistanceMeters && formatDistance(lastCompleted.targetDistanceMeters),
+    lastCompleted.targetPaceSecPerKm && formatPace(lastCompleted.targetPaceSecPerKm),
+  ]
+    .filter(Boolean)
+    .join(" @ ");
+  const actualDesc = [
+    formatDistance(activity.distanceMeters),
+    formatPace(activity.avgPaceSecPerKm),
+    activity.avgHeartRate ? `avg HR ${activity.avgHeartRate}` : null,
+  ]
+    .filter(Boolean)
+    .join(" @ ");
+
+  const prompt = `
+The runner just completed a scheduled ${lastCompleted.type} run (${toDateKey(lastCompleted.date)}).
+Target: ${targetDesc || "no specific target"}.
+Actual: ${actualDesc}.
+
+Goal: ${buildGoalSummary(activePlan.goal)}.
+
+Upcoming scheduled workouts (do not add, remove, or reassign dates/types —
+only decide whether each one's target distance/pace should shift slightly
+based on this single result):
+${upcoming
+  .map((w) => {
+    const t = [
+      w.targetDistanceMeters && formatDistance(w.targetDistanceMeters),
+      w.targetPaceSecPerKm && formatPace(w.targetPaceSecPerKm),
+    ]
+      .filter(Boolean)
+      .join(" @ ");
+    return `${toDateKey(w.date)}: ${w.type}${t ? `, currently ${t}` : ""}`;
+  })
+  .join("\n")}
+
+This is one data point, not a full replan — most upcoming workouts should
+probably stay exactly as they are. Only adjust ones where this result is a
+real signal (e.g. noticeably harder or easier than the target pace/HR
+suggested), and keep changes modest.
+`.trim();
+
+  let response;
+  try {
+    response = await withGeminiFallback((model) =>
+      genai.models.generateContent({
+        model,
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: ADJUSTMENT_RESPONSE_SCHEMA,
+        },
+      }),
+    );
+  } catch (err) {
+    console.error("Post-workout adjustment failed for user", userId, err);
+    return;
+  }
+
+  const parsed = JSON.parse(response.text ?? "{}") as Partial<AdjustmentResponse>;
+  const upcomingByDate = new Map(upcoming.map((w) => [toDateKey(w.date), w]));
+
+  for (const adj of parsed.adjustments ?? []) {
+    const workout = upcomingByDate.get(adj.date);
+    if (!workout) continue;
+
+    await prisma.plannedWorkout.update({
+      where: { id: workout.id },
+      data: {
+        targetDistanceMeters: adj.targetDistanceMeters ?? workout.targetDistanceMeters,
+        targetPaceSecPerKm: adj.targetPaceSecPerKm ?? workout.targetPaceSecPerKm,
+      },
+    });
+
+    try {
+      await syncSingleWorkoutToCalendar(userId, workout.id);
+    } catch (err) {
+      console.error("Calendar sync failed for adjusted workout", workout.id, err);
+    }
+  }
 }

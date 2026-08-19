@@ -1,6 +1,9 @@
 import { prisma } from "@/lib/db";
 import { stravaProvider } from "./strava-provider";
-import { matchCompletedWorkouts } from "@/lib/coach/plan-generator";
+import {
+  matchCompletedWorkouts,
+  adjustUpcomingWorkouts,
+} from "@/lib/coach/plan-generator";
 
 const TOKEN_REFRESH_SKEW_MS = 5 * 60 * 1000; // refresh 5 min before actual expiry
 
@@ -93,7 +96,17 @@ export async function syncStravaActivities(
     },
   });
 
-  await matchCompletedWorkouts(userId);
+  const newlyCompleted = await matchCompletedWorkouts(userId);
+
+  // Light-touch reaction, not a full replan — best-effort so a Gemini
+  // hiccup here doesn't make the sync itself look like it failed.
+  if (newlyCompleted > 0) {
+    try {
+      await adjustUpcomingWorkouts(userId);
+    } catch (err) {
+      console.error("Post-sync plan adjustment failed for user", userId, err);
+    }
+  }
 
   return { synced: activities.length };
 }
