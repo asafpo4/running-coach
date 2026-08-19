@@ -50,16 +50,14 @@ export default function ChatPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text }),
       });
+      if (!res.ok) throw new Error("Request failed");
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Request failed");
       setMessages((prev) => [
         ...prev,
         { id: `coach-${Date.now()}`, role: "coach", content: data.reply },
       ]);
-    } catch (err) {
-      // TEMPORARY: show the real error instead of a generic message, to
-      // diagnose the current failure. Revert once fixed.
-      setError(err instanceof Error ? err.message : "The coach didn't answer. Try again.");
+    } catch {
+      setError("The coach didn't answer. Try again.");
     } finally {
       setSending(false);
     }

@@ -45,11 +45,15 @@ function getUpcomingTrainingDates(trainingDays: string[]): Date[] {
  * Safe to call repeatedly — only touches workouts that aren't linked yet.
  */
 export async function matchCompletedWorkouts(userId: string): Promise<void> {
+  // Scoped to the active plan only — retired plans don't need retroactive
+  // completion tracking, and including them let two workouts from
+  // different plan versions land on the same date and both try to claim
+  // the same activity, which fails since completedActivityId is unique.
   const unmatched = await prisma.plannedWorkout.findMany({
     where: {
       completedActivityId: null,
       date: { lte: new Date() },
-      plan: { userId },
+      plan: { userId, status: "active" },
     },
   });
   if (unmatched.length === 0) return;
@@ -62,13 +66,24 @@ export async function matchCompletedWorkouts(userId: string): Promise<void> {
     activities.map((a) => [toDateKey(a.date), a]),
   );
 
+  // Defense in depth: don't let two workouts in this same run claim the
+  // same activity either.
+  const alreadyClaimed = await prisma.plannedWorkout.findMany({
+    where: { completedActivityId: { not: null }, plan: { userId } },
+    select: { completedActivityId: true },
+  });
+  const claimedActivityIds = new Set(
+    alreadyClaimed.map((w) => w.completedActivityId!),
+  );
+
   for (const workout of unmatched) {
     const match = activityByDateKey.get(toDateKey(workout.date));
-    if (match) {
+    if (match && !claimedActivityIds.has(match.id)) {
       await prisma.plannedWorkout.update({
         where: { id: workout.id },
         data: { completedActivityId: match.id },
       });
+      claimedActivityIds.add(match.id);
     }
   }
 }
