@@ -167,10 +167,6 @@ async function handleChat(userId: string, message: string) {
     // the tool calls are real DB writes regardless of whether the model
     // manages to narrate them.
     const toolOutcomes: string[] = [];
-    // TEMPORARY: full trace of every tool call attempted, appended to the
-    // reply so we can see exactly what ran without needing DB access.
-    // Remove once diagnosed.
-    const toolTrace: string[] = [];
 
     const response = await withGeminiFallback(async (model) => {
       const chat = genai.chats.create({
@@ -200,9 +196,6 @@ async function handleChat(userId: string, message: string) {
               ? await handler(userId, call.args ?? {})
               : { success: false, message: `Unknown tool: ${call.name}` };
             toolOutcomes.push(outcome.message);
-            toolTrace.push(
-              `${call.name}(${JSON.stringify(call.args)}) -> ${JSON.stringify(outcome)}`,
-            );
             return createPartFromFunctionResponse(
               call.id ?? call.name ?? "unknown",
               call.name ?? "unknown",
@@ -221,10 +214,6 @@ async function handleChat(userId: string, message: string) {
       (toolOutcomes.length > 0
         ? toolOutcomes.join(" ")
         : "…the coach is speechless. Try again.");
-
-    if (toolTrace.length > 0) {
-      replyText += `\n\n[DEBUG tool calls]\n${toolTrace.join("\n")}`;
-    }
   } catch {
     replyText =
       "The coach is buried under too many requests right now (Gemini's free tier is overloaded) — give it a minute and try again.";
