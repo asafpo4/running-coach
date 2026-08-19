@@ -9,6 +9,13 @@ import {
 } from "@/lib/coach/persona-prompt";
 import { matchCompletedWorkouts } from "@/lib/coach/plan-generator";
 
+// Default Vercel Hobby function timeout (5-10s) isn't enough headroom for
+// withGeminiFallback's sequential model attempts plus the DB queries around
+// it — Vercel kills the function mid-request rather than letting our own
+// fallback message return, which the client sees as a hard failure. Hobby
+// allows up to 60s if explicitly requested.
+export const maxDuration = 60;
+
 const WORKOUT_TYPE_LABEL: Record<string, string> = {
   easy: "Easy run",
   tempo: "Tempo run",
