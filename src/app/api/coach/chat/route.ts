@@ -58,30 +58,41 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "message is required" }, { status: 400 });
   }
 
+  // TEMPORARY: wraps the whole handler so we see exactly where/why a
+  // request is failing, not just the Gemini call. Remove once diagnosed.
+  try {
+    return await handleChat(user.id, message);
+  } catch (err) {
+    const detail = err instanceof Error ? `${err.name}: ${err.message}\n${err.stack}` : String(err);
+    return NextResponse.json({ error: `[DEBUG] ${detail}` }, { status: 500 });
+  }
+}
+
+async function handleChat(userId: string, message: string) {
   await prisma.chatMessage.create({
-    data: { userId: user.id, role: "user", content: message },
+    data: { userId: userId, role: "user", content: message },
   });
 
   const recentHistory = await prisma.chatMessage.findMany({
-    where: { userId: user.id },
+    where: { userId: userId },
     orderBy: { createdAt: "desc" },
     take: 10,
   });
 
-  await matchCompletedWorkouts(user.id);
+  await matchCompletedWorkouts(userId);
 
   const [goal, recentActivities, activePlan] = await Promise.all([
     prisma.goal.findFirst({
-      where: { userId: user.id },
+      where: { userId: userId },
       orderBy: { createdAt: "desc" },
     }),
     prisma.activity.findMany({
-      where: { userId: user.id },
+      where: { userId: userId },
       orderBy: { date: "desc" },
       take: 5,
     }),
     prisma.trainingPlan.findFirst({
-      where: { userId: user.id, status: "active" },
+      where: { userId: userId, status: "active" },
       orderBy: { generatedAt: "desc" },
       include: { workouts: { orderBy: { date: "asc" } } },
     }),
@@ -129,24 +140,21 @@ export async function POST(request: Request) {
     scheduleSummary,
   })}`;
 
-  let replyText: string;
-  try {
-    const response = await withGeminiFallback((model) => {
-      const chat = genai.chats.create({
-        model,
-        config: { systemInstruction },
-        history: chatHistory,
-      });
-      return chat.sendMessage({ message });
+  // TEMPORARY: inner catch removed so a Gemini failure propagates to the
+  // outer debug wrapper in POST() instead of being silently converted to
+  // the friendly fallback message. Restore the try/catch once diagnosed.
+  const response = await withGeminiFallback((model) => {
+    const chat = genai.chats.create({
+      model,
+      config: { systemInstruction },
+      history: chatHistory,
     });
-    replyText = response.text ?? "…the coach is speechless. Try again.";
-  } catch {
-    replyText =
-      "The coach is buried under too many requests right now (Gemini's free tier is overloaded) — give it a minute and try again.";
-  }
+    return chat.sendMessage({ message });
+  });
+  const replyText = response.text ?? "…the coach is speechless. Try again.";
 
   await prisma.chatMessage.create({
-    data: { userId: user.id, role: "coach", content: replyText },
+    data: { userId: userId, role: "coach", content: replyText },
   });
 
   return NextResponse.json({ reply: replyText });
