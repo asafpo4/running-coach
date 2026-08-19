@@ -138,8 +138,16 @@ async function handleChat(userId: string, message: string) {
     scheduleSummary,
   })}`;
 
+  const MAX_TOOL_ROUNDS = 5;
+
   let replyText: string;
   try {
+    // Track outcomes across rounds so we can still tell the user what
+    // actually happened even if the model's final text comes back empty —
+    // the tool calls are real DB writes regardless of whether the model
+    // manages to narrate them.
+    const toolOutcomes: string[] = [];
+
     const response = await withGeminiFallback(async (model) => {
       const chat = genai.chats.create({
         model,
@@ -152,17 +160,22 @@ async function handleChat(userId: string, message: string) {
 
       let result = await chat.sendMessage({ message });
 
-      // One round of tool calls is enough for these actions — reschedule/
-      // swap/skip don't need to chain into further calls. Execute whatever
-      // the model asked for, then send the results back for its actual
-      // reply to the user.
-      if (result.functionCalls && result.functionCalls.length > 0) {
+      // Loop rather than a single fixed round — the model can reasonably
+      // want a second round (e.g. after seeing one result, decide another
+      // date also needs changing), and treating only the first round as
+      // final left later tool calls silently unexecuted.
+      for (
+        let round = 0;
+        round < MAX_TOOL_ROUNDS && result.functionCalls && result.functionCalls.length > 0;
+        round++
+      ) {
         const responseParts = await Promise.all(
           result.functionCalls.map(async (call) => {
             const handler = call.name ? WORKOUT_TOOL_HANDLERS[call.name] : undefined;
             const outcome = handler
               ? await handler(userId, call.args ?? {})
               : { success: false, message: `Unknown tool: ${call.name}` };
+            toolOutcomes.push(outcome.message);
             return createPartFromFunctionResponse(
               call.id ?? call.name ?? "unknown",
               call.name ?? "unknown",
@@ -175,7 +188,12 @@ async function handleChat(userId: string, message: string) {
 
       return result;
     });
-    replyText = response.text ?? "…the coach is speechless. Try again.";
+
+    replyText =
+      response.text ||
+      (toolOutcomes.length > 0
+        ? toolOutcomes.join(" ")
+        : "…the coach is speechless. Try again.");
   } catch {
     replyText =
       "The coach is buried under too many requests right now (Gemini's free tier is overloaded) — give it a minute and try again.";
