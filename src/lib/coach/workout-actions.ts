@@ -48,6 +48,16 @@ export const WORKOUT_TOOL_DECLARATIONS: FunctionDeclaration[] = [
           enum: WORKOUT_TYPES,
           description: "The new workout type",
         },
+        targetDistanceMeters: {
+          type: Type.NUMBER,
+          description:
+            "Target distance in meters for the new type. Required when newType isn't 'rest' and the workout doesn't already have a sensible target for that type (e.g. it's currently a rest day, or you're un-skipping a previously-skipped workout) — pick a reasonable value from the goal and the rest of the plan. Omit only when the workout already has a fitting target you want to keep.",
+        },
+        targetPaceSecPerKm: {
+          type: Type.NUMBER,
+          description:
+            "Target pace in seconds per km for the new type, same rule as targetDistanceMeters — supply a sensible value whenever the workout doesn't already have one for a non-rest type.",
+        },
       },
       required: ["date", "newType"],
     },
@@ -136,12 +146,27 @@ async function swapWorkoutType(
   }
 
   const isRest = newType === "rest";
+  const targetDistanceMeters =
+    typeof args.targetDistanceMeters === "number" ? args.targetDistanceMeters : null;
+  const targetPaceSecPerKm =
+    typeof args.targetPaceSecPerKm === "number" ? args.targetPaceSecPerKm : null;
+
   await prisma.plannedWorkout.update({
     where: { id: workout.id },
     data: {
       type: newType as WorkoutType,
-      targetDistanceMeters: isRest ? null : workout.targetDistanceMeters,
-      targetPaceSecPerKm: isRest ? null : workout.targetPaceSecPerKm,
+      // Prefer targets the model supplied for this call; otherwise keep
+      // whatever the workout already had. Carrying over stale targets only
+      // makes sense when they were actually for this same non-rest type —
+      // if the workout is coming from rest (targets already null), there's
+      // nothing to carry over, so it stays null unless the model provided
+      // fresh values above.
+      targetDistanceMeters: isRest
+        ? null
+        : (targetDistanceMeters ?? workout.targetDistanceMeters),
+      targetPaceSecPerKm: isRest
+        ? null
+        : (targetPaceSecPerKm ?? workout.targetPaceSecPerKm),
     },
   });
   await syncSingleWorkoutToCalendar(userId, workout.id);
